@@ -18,6 +18,13 @@ data = {
 
 df = pd.DataFrame(data)
 
+color_scale = [[0, "rgb(51,160,44)"],
+               [0.25, "rgb(178,223,138)"],
+               [0.45, "rgb(166,206,227)"],
+               [0.65, "rgb(31,120,180)"],
+               [0.85, "rgb(251,154,153)"],
+               [1, "rgb(227,26,28)"]]
+
 # Initialize the Dash app
 app = dash.Dash(__name__)
 
@@ -26,27 +33,30 @@ def create_figure(df):
     fig = go.Figure()
     
     # Add data with customdata initialized (set value as customdata for each point)
-    fig.add_trace(go.Scatter(
+    fig.add_trace(go.Scattergl(
         x=df['x'],
         y=df['y'],
         mode='markers',
         marker=dict(
-            size=12,
+            size=10,
             color=df['Flag'],  # Use value as color scale
-            colorscale='RdYlGn',  # Color scale to show values
+            colorscale=color_scale,  # Color scale to show values
             showscale=True
         ),
-        text=(df['Flag']),  # Tooltip text will show value
-        hoverinfo="text",
-        customdata=df['Flag'],  # Initialize customdata with the values
-        selected=dict(marker=dict(color='red', size=14))  # Style for selected points
+        customdata=df[['Flag']].values,  # Include only necessary data
+        hovertemplate=(
+            "Flag: %{customdata[0]}<br>"
+            "X: %{x}<br>"
+            "Y: %{y:.2f}<extra></extra>"
+        ),
+        selected=dict(marker=dict(color='yellow', size=12))  # Style for selected points
     ))
 
     fig.update_layout(
         title="Interactive Data Flagging",
         clickmode="event+select",  # Enable click interaction
         hovermode="closest",
-        dragmode='select'  # Enable selection of multiple points
+        dragmode='zoom'  # Enable selection of multiple points
     )
     return fig
 
@@ -55,6 +65,15 @@ app.layout = html.Div([
     # Graph
     html.H1("Graph and flag data"),
     dcc.Graph(id='scatter-plot', figure=create_figure(df)),
+
+    # Store components to track intermediate data states
+    dcc.Store(id='full-data-store', data=df.to_dict('records')), # Stores the full data for 
+    dcc.Store(id='filtered-data-store', data=df.to_dict('records')),  # Stores filtered data for table
+    dcc.Store(id='button1-state', data=0),  # Tracks button state to prevent repeated updates
+    dcc.Store(id='button2-state', data=0),  # Tracks button state to prevent repeated updates
+    dcc.Store(id='button3-state', data=0),  # Tracks button state to prevent repeated updates
+    dcc.Store(id='last-x-range', data=None),  # Track last valid x-axis range
+    dcc.Store(id='last-y-range', data=None),  # Track last valid y-axis range
 
     dbc.Row([
         # Column 1: Upload File
@@ -83,20 +102,6 @@ app.layout = html.Div([
         ], width=4, style={'display': 'flex', 'flexDirection': 'column', 'justifyContent': 'center', 'alignItems': 'center'}),  # Center the column contents
     ]),
 
-    # Store components to track intermediate data states
-    dcc.Store(id='filtered-data-store', data=df.to_dict('records')),  # Stores filtered data for table
-    dcc.Store(id='button1-state', data=0),  # Tracks button state to prevent repeated updates
-    dcc.Store(id='button2-state', data=0),  # Tracks button state to prevent repeated updates
-    dcc.Store(id='button3-state', data=0),  # Tracks button state to prevent repeated updates
-    dcc.Store(id='last-x-range', data=None),  # Track last valid x-axis range
-    dcc.Store(id='last-y-range', data=None),  # Track last valid y-axis range
-
-    ## Save the data with updated data flags saving
-    #html.Div([
-
-    #]),  
-    #dcc.Store(id='button-state', data=0),  # Tracks button state to prevent repeated updates
-
     # DataTable to display the DataFrame (without the Index column)
     dash_table.DataTable(
         id='data-table',
@@ -115,9 +120,6 @@ app.layout = html.Div([
     html.Div(id='axis-ranges', style={'display': 'none'})
 ])
 
-
-
-
 #-----------------------------------------------------------------------------#
 ##############################   Callback Start   #############################
 #-----------------------------------------------------------------------------# 
@@ -130,8 +132,8 @@ app.layout = html.Div([
      Output('button3-state', 'data'),
      Output('data-table', 'data'),
      Output('scatter-plot', 'selectedData'),  # Clear selectedData after update
-     Output('axis-ranges', 'children'),
      Output('filtered-data-store', 'data'),
+     Output('full-data-store', 'data'),
      Output('last-x-range', 'data'),  # Store the last valid x-axis range
      Output('last-y-range', 'data')],  # Store the last valid y-axis range
     [Input('upload-data', 'contents'),
@@ -142,6 +144,7 @@ app.layout = html.Div([
      Input('scatter-plot', 'relayoutData')],  # Listen to axis range updates
     [State('value-input', 'value'),
      State('file-name', 'value'),
+     State('full-data-store', 'data'),
      State('scatter-plot', 'figure'),
      State('button1-state', 'data'),
      State('button2-state', 'data'),
@@ -157,6 +160,7 @@ def update_plot(contents,      # Tracks selected file
                 relayout_data, # Tracks plot axes
                 new_value,     # New flag input
                 savefile_name, # Name of .csv savefile
+                stored_data,   # Full DataFrame
                 figure,        # Plot
                 button1_state, # Update button state
                 button2_state, # Save button state
@@ -164,17 +168,16 @@ def update_plot(contents,      # Tracks selected file
                 last_x_range,  # Previous range for the x-axis
                 last_y_range   # Previous range for the y-axis
                 ):
-
+    if stored_data is not None:
+        df = pd.DataFrame(stored_data)
+    else:
+        df = pd.DataFrame()
+ 
+    df_filtered = df
+    
     # If figure is None, initialize df and customdata
     if figure is None:
         figure = create_figure(df)
-
-    # Ensure that df is properly updated from the figure
-    df = pd.DataFrame({
-        'x': figure['data'][0]['x'],
-        'y': figure['data'][0]['y'],
-        'Flag': figure['data'][0]['customdata']
-    })
 
     # If figure is None, initialize df and customdata
     if data_n_clicks > button3_state and contents is not None:
@@ -194,9 +197,6 @@ def update_plot(contents,      # Tracks selected file
 
         except Exception as e:
             raise Exception(f'An Error occured when loading the data ({e}).\nPlease ensure the file format is .csv or .txt.')
-
-    # Initialize the filtered dataframe
-    df_filtered = df
 
     # Get the current axis ranges from the relayoutData
     if relayout_data is None or next((True for axrng in relayout_data if 'autorange' in axrng), False):
@@ -241,10 +241,13 @@ def update_plot(contents,      # Tracks selected file
 
     if all(ele is not None for ele in y_range):
         df_filtered = df_filtered[(df_filtered['y'] >= y_range[0]) & (df_filtered['y'] <= y_range[1])]
-
-    # Show only the 100 first values of the sliced DataFrame
-    df_filtered_top100 = df_filtered.head(100)
-
+    
+    # Show only the 100 first values of the sliced DataFrame 
+    if not df_filtered.isna().all().all():
+        df_filtered_top100 = df_filtered.head(100)
+    else:
+        df_filtered_top100 = df.head(100)
+        
     # Handle multiple point selection (from selectedData)
     if selectedData:
         selected_indices = [point['pointIndex'] for point in selectedData['points']]
@@ -254,13 +257,10 @@ def update_plot(contents,      # Tracks selected file
     # Handle the Update Value logic when button is clicked
     if n_clicks > button1_state and selected_indices and new_value is not None:
         # Update the value for each selected point
-        for idx in selected_indices:
-            df.loc[idx, 'Flag'] = new_value
+        df.loc[selected_indices, 'Flag'] = new_value
 
-        # Update the figure's data
-        figure['data'][0]['customdata'] = df['Flag'].tolist()  # Update customdata
+    if selected_indices:
         for idx in selected_indices:
-            figure['data'][0]['text'][idx] = new_value  # Update the text shown on hover
             figure['data'][0]['marker']['color'][idx] = new_value  # Update color
 
         # Reset the button state to prevent further updates until next click
@@ -268,18 +268,18 @@ def update_plot(contents,      # Tracks selected file
 
         # Clear the selection box after update
         return figure, button1_state, button2_state, button3_state, df_filtered_top100[['x', 'y', 'Flag']].to_dict('records'), None, \
-               f"X-axis range: {x_range} | Y-axis range: {y_range}", df_filtered_top100.to_dict('records'), last_x_range, last_y_range
+               df_filtered_top100.to_dict('records'), df.to_dict('records'), last_x_range, last_y_range
 
     if save_n_clicks > button2_state and savefile_name is not None:
         df.to_csv(f'{str(savefile_name)}.csv')
         button2_state = save_n_clicks  # Set the button state to current n_clicks value
 
         return figure, button1_state, button2_state, button3_state, df_filtered_top100[['x', 'y', 'Flag']].to_dict('records'), None, \
-               f"X-axis range: {x_range} | Y-axis range: {y_range}", df_filtered_top100.to_dict('records'), last_x_range, last_y_range
-
+               df_filtered_top100.to_dict('records'), df.to_dict('records'), last_x_range, last_y_range
+    
     # If no update is performed, just return the figure and table data without changes
     return figure, button1_state, button2_state, button3_state, df_filtered_top100[['x', 'y', 'Flag']].to_dict('records'), selectedData, \
-           f"X-axis range: {x_range} | Y-axis range: {y_range}", df_filtered_top100.to_dict('records'), last_x_range, last_y_range
+           df_filtered_top100.to_dict('records'), df.to_dict('records'), last_x_range, last_y_range
 
 # Run the app
 if __name__ == '__main__':
