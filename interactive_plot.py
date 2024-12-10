@@ -20,10 +20,10 @@ df = pd.DataFrame(data)
 
 color_scale = [[0, "rgb(51,160,44)"],
                [0.25, "rgb(178,223,138)"],
-               [0.45, "rgb(166,206,227)"],
-               [0.65, "rgb(31,120,180)"],
-               [0.85, "rgb(251,154,153)"],
-               [1, "rgb(227,26,28)"]]
+               [0.45, "rgb(251,154,153)"],
+               [0.65, "rgb(227,26,28)"],
+               [0.85, "rgb(166,206,227)"],
+               [1, "rgb(31,120,180)"]]
 
 # Initialize the Dash app
 app = dash.Dash(__name__)
@@ -259,7 +259,8 @@ def update_plot(contents,      # Tracks selected file
         # Update the value for each selected point
         df.loc[selected_indices, 'Flag'] = new_value
 
-    if selected_indices:
+        # Update the figure's data
+        figure['data'][0]['customdata'] = df['Flag'].tolist()  # Update customdata
         for idx in selected_indices:
             figure['data'][0]['marker']['color'][idx] = new_value  # Update color
 
